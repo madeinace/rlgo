@@ -1,0 +1,16 @@
+{
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.languageServer": "Pylance",
+  "python.analysis.typeCheckingMode": "basic",
+  "cSpell.words": [
+    "comment:define a list of words that the spell checker should consider as correctly spelled",
+    "skyfill",
+    "dataloaders"
+  ],
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.formatOnType": true
+  }
+}

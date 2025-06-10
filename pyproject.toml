@@ -1,0 +1,15 @@
+[project]
+name = "rl-cliff-walking"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium>=1.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.2.0",
+    "ruff>=0.11.13",
+]
