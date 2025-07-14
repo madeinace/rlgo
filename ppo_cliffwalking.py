@@ -267,6 +267,11 @@ def train():
 
                 entropy_loss = entropy.mean()
                 # J(θ)=L_CLIP −c_1 * L_VF + c_2 * S
+                # !!! Important !!!
+                # The entropy coefficient in the loss function is currently set to 0.01.
+                # A low entropy coefficient causes the policy to become deterministic too quickly,
+                # reducing exploration.
+                # So raise it from 0.01 to 0.05 or above
                 target = policy_loss - 0.5 * value_loss + 0.08 * entropy_loss
                 # Loss = -J(θ)
                 loss = -target
