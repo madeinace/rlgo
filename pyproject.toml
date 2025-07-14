@@ -1,15 +1,19 @@
 [project]
-name = "rl-cliff-walking"
+name = "rl-toytext"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "gymnasium[toy-text]>=1.1.1",
+    "matplotlib>=3.10.3",
+    "tensorboard>=2.19.0",
+    "torch>=2.7.1",
 ]
 
 [dependency-groups]
 dev = [
     "pre-commit>=4.2.0",
     "ruff>=0.11.13",
+    "standard-imghdr>=3.13.0",
 ]

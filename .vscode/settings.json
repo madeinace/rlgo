@@ -5,7 +5,7 @@
   "python.analysis.typeCheckingMode": "basic",
   "cSpell.words": [
     "comment:define a list of words that the spell checker should consider as correctly spelled",
-    "skyfill",
+    "rl-toytext",
     "dataloaders"
   ],
   "[python]": {
