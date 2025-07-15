@@ -33,9 +33,9 @@ class OneHotWrapper(gym.ObservationWrapper[np.ndarray, int, Discrete]):
 
 
 # ----------------------
-# 2. Policy Network
+# 2. Agent
 # ----------------------
-class Policy(nn.Module):
+class Agent(nn.Module):
     def __init__(self, obs_dim, act_dim):
         super().__init__()
         self.net = nn.Sequential(
@@ -65,14 +65,18 @@ class Args:
     torch_deterministic: bool = True
     total_timesteps: int = 100_000
     num_envs: int = 1
+    num_steps_per_rollout: int = 64
     gamma: float = 0.99
     gae_lambda: float = 0.9
-    batch_size: int = 64
-    minibatch_size: int = 16
+    num_minibatches: int = 4
     epochs: int = 8
     learning_rate: float = 2.5e-4
     clip_coef: float = 0.2
     max_grad_norm: float = 0.5
+    # calculation on runtime
+    batch_size: int = 0
+    minibatch_size: int = 0
+    num_iterations: int = 0
 
 
 @dataclass
@@ -116,6 +120,9 @@ def make_env() -> Callable[[], Env[np.ndarray, int]]:
 
 def train():
     args = Args()
+    args.batch_size = int(args.num_envs * args.num_steps_per_rollout)
+    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.num_iterations = args.total_timesteps // args.batch_size
     writer = SummaryWriter(f"runs/ppo_cliffwalking_{int(time.time())}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -133,8 +140,8 @@ def train():
     obs_dim = obs_space.shape[0]  # 48
     act_dim = act_space.n.item()  # 4
 
-    policy = Policy(obs_dim, act_dim).to(device)
-    optimizer = torch.optim.Adam(policy.parameters(), lr=args.learning_rate, eps=1e-5)
+    agent = Agent(obs_dim, act_dim).to(device)
+    optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # Initialize variables
     global_step = 0
@@ -142,16 +149,17 @@ def train():
     next_obs, _ = envs.reset(seed=args.seed)
     next_done = torch.zeros(args.num_envs, device=device)
 
-    while global_step < args.total_timesteps:
+    for iteration in range(args.num_iterations):
         # Collect rollout
+        print("Iteration: %s", iteration)
         rollout = Rollout()
 
-        for _ in range(args.batch_size):
+        for _ in range(0, args.num_steps_per_rollout):
             obs = torch.Tensor(next_obs).to(device)
             # done = next_done
 
             with torch.no_grad():
-                logits, value = policy.get_action(obs)
+                logits, value = agent.get_action(obs)
                 dist = Categorical(logits=logits)
                 action = dist.sample()
 
@@ -199,7 +207,7 @@ def train():
         # Calculate returns and advantages
         with torch.no_grad():
             # calculate V_t+1 one more time to do the GAE part
-            next_value = policy.get_action(torch.Tensor(next_obs).to(device))[
+            next_value = agent.get_action(torch.Tensor(next_obs).to(device))[
                 1
             ].squeeze() * (1 - next_done)
             advantages = torch.zeros_like(processed.rewards, device=device)
@@ -234,7 +242,7 @@ def train():
                 advantages_mb = advantages[mb_indices]
                 returns_mb = returns[mb_indices]
 
-                logits, values = policy.get_action(obs)
+                logits, values = agent.get_action(obs)
                 dist = Categorical(logits=logits)
                 new_logprobs = dist.log_prob(actions)
                 entropy = dist.entropy().mean()
@@ -277,7 +285,7 @@ def train():
                 loss = -target
                 optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(policy.parameters(), args.max_grad_norm)
+                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
         # Log metrics
@@ -290,7 +298,7 @@ def train():
             "charts/SPS", int(global_step / (time.time() - start_time)), global_step
         )
     print("Training complete. Saving model...")
-    torch.save(policy.state_dict(), "ppo_cliffwalking.pt")
+    torch.save(agent.state_dict(), "ppo_cliffwalking.pt")
     envs.close()
     writer.close()
 
@@ -301,7 +309,7 @@ def train():
 def evaluate():
     env = gym.make("CliffWalking-v1", render_mode="human")
     env = OneHotWrapper(env, num_states=48)
-    policy = Policy(48, 4)
+    policy = Agent(48, 4)
     policy.load_state_dict(torch.load("ppo_cliffwalking.pt"))
     policy.eval()
 
