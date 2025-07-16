@@ -97,9 +97,13 @@ class ProcessedRollout:
 # ----------------------
 # 4. Training Loop
 # ----------------------
+def make_raw_env(render_mode: str | None = None):
+    return gym.make("CliffWalking-v1", is_slippery=True, render_mode=render_mode)
+
+
 def make_env() -> Callable[[], Env[np.ndarray, int]]:
     def thunk():
-        env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=True))
+        env = cast(Env[Discrete, int], make_raw_env())
         # env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=False))
         env = RecordEpisodeStatistics(env)
         env = OneHotWrapper(
@@ -316,7 +320,7 @@ def train():
 # 5. Evaluate Trained Policy
 # ----------------------
 def evaluate():
-    env = gym.make("CliffWalking-v1", render_mode="human")
+    env = make_raw_env(render_mode="human")
     env = OneHotWrapper(env, num_states=48)
     policy = Agent(48, 4)
     policy.load_state_dict(torch.load("ppo_cliffwalking.pt"))
@@ -333,5 +337,10 @@ def evaluate():
 
 
 if __name__ == "__main__":
+    # import argparse
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('x', type=str, help='x')
+    # args = parser.parse_args()
+    # args.x
     train()
     evaluate()
