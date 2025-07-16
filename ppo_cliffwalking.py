@@ -63,8 +63,8 @@ class Args:
 
     seed: int = 2025
     torch_deterministic: bool = True
-    # total_timesteps: int = 500_000
-    total_timesteps: int = 100_000
+    total_timesteps: int = 500_000
+    # total_timesteps: int = 100_000
     num_envs: int = 2
     num_steps_per_rollout: int = 64
     gamma: float = 0.99
@@ -99,8 +99,8 @@ class ProcessedRollout:
 # ----------------------
 def make_env() -> Callable[[], Env[np.ndarray, int]]:
     def thunk():
-        # env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=True))
-        env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=False))
+        env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=True))
+        # env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=False))
         env = RecordEpisodeStatistics(env)
         env = OneHotWrapper(
             env, num_states=int(cast(Discrete, env.observation_space).n)
