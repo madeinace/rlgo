@@ -10,7 +10,7 @@ import numpy as np
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import RecordEpisodeStatistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # ----------------------
@@ -63,8 +63,9 @@ class Args:
 
     seed: int = 2025
     torch_deterministic: bool = True
+    # total_timesteps: int = 500_000
     total_timesteps: int = 100_000
-    num_envs: int = 1
+    num_envs: int = 2
     num_steps_per_rollout: int = 64
     gamma: float = 0.99
     gae_lambda: float = 0.9
@@ -80,27 +81,17 @@ class Args:
 
 
 @dataclass
-class Rollout:
-    """Collected data during a rollout."""
-
-    obs: list[torch.Tensor] = field(default_factory=list)
-    actions: list[torch.Tensor] = field(default_factory=list)
-    logprobs: list[torch.Tensor] = field(default_factory=list)
-    rewards: list[torch.Tensor] = field(default_factory=list)
-    dones: list[torch.Tensor] = field(default_factory=list)
-    values: list[torch.Tensor] = field(default_factory=list)
-
-
-@dataclass
 class ProcessedRollout:
     """Processed data ready for training."""
 
     obs: torch.Tensor
     actions: torch.Tensor
     logprobs: torch.Tensor
-    rewards: torch.Tensor
-    dones: torch.Tensor
     values: torch.Tensor
+    advantages: torch.Tensor
+    returns: torch.Tensor
+    # rewards: torch.Tensor
+    # dones: torch.Tensor
 
 
 # ----------------------
@@ -108,7 +99,8 @@ class ProcessedRollout:
 # ----------------------
 def make_env() -> Callable[[], Env[np.ndarray, int]]:
     def thunk():
-        env = cast(Env[Discrete, int], gym.make("CliffWalking-v1"))
+        # env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=True))
+        env = cast(Env[Discrete, int], gym.make("CliffWalking-v1", is_slippery=False))
         env = RecordEpisodeStatistics(env)
         env = OneHotWrapper(
             env, num_states=int(cast(Discrete, env.observation_space).n)
@@ -131,7 +123,9 @@ def train():
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
     # Create environment
-    envs = gym.vector.SyncVectorEnv([make_env() for _ in range(args.num_envs)])
+    envs = gym.vector.SyncVectorEnv(
+        [make_env() for _ in range(args.num_envs)],
+    )
     # since SyncVectorEnv definition loses the observation space and action space types
     # we might as well cast()
     obs_space = cast(Box, envs.single_observation_space)
@@ -142,67 +136,78 @@ def train():
 
     agent = Agent(obs_dim, act_dim).to(device)
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    obs = torch.zeros(
+        # it works like (64, 2) + (4,) => (128, 4, 4)
+        (args.num_steps_per_rollout, args.num_envs) + obs_space.shape
+    ).to(device)
+    actions = torch.zeros(
+        (args.num_steps_per_rollout, args.num_envs)
+        + cast(tuple[int, ...], act_space.shape)
+    ).to(device)
+
+    logprobs = torch.zeros((args.num_steps_per_rollout, args.num_envs)).to(device)
+    rewards = torch.zeros((args.num_steps_per_rollout, args.num_envs)).to(device)
+    dones = torch.zeros((args.num_steps_per_rollout, args.num_envs)).to(device)
+    values = torch.zeros((args.num_steps_per_rollout, args.num_envs)).to(device)
 
     # Initialize variables
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
+    next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs, device=device)
 
     for iteration in range(args.num_iterations):
         # Collect rollout
         print("Iteration: %s", iteration)
-        rollout = Rollout()
 
-        for _ in range(0, args.num_steps_per_rollout):
-            obs = torch.Tensor(next_obs).to(device)
-            # done = next_done
-
+        for step in range(0, args.num_steps_per_rollout):
+            obs[step] = next_obs
+            dones[step] = next_done
             with torch.no_grad():
-                logits, value = agent.get_action(obs)
+                logits, value = agent.get_action(next_obs)
                 dist = Categorical(logits=logits)
                 action = dist.sample()
+            values[step] = value.flatten()
+            actions[step] = action
+            logprobs[step] = dist.log_prob(action)
 
             next_obs, reward, terminated, truncated, infos = envs.step(
                 action.cpu().numpy()
             )
-            done = np.logical_or(terminated, truncated)
+            next_done = np.logical_or(terminated, truncated)
             # done = torch.tensor(
             #     [t or d for t, d in zip(terminated, truncated)], device=device
             # )
 
-            rollout.obs.append(obs)
-            rollout.actions.append(action)
-            rollout.logprobs.append(dist.log_prob(action))
-            rollout.rewards.append(torch.tensor(reward, device=device))
-            next_done = torch.tensor(
-                done, dtype=torch.float32, device=device
-            )  # Convert to tensor
-            rollout.dones.append(next_done)
-            rollout.values.append(value)
+            if np.any(next_done):
+                # due to default autorest_mode=NEXT_STEP in gymnasium,
+                # we have to location the exact done env index
+                # refer to https://farama.org/Vector-Autoreset-Mode
+                for i in range(args.num_envs):
+                    if next_done[i]:
+                        print(
+                            f"global_step={global_step}, episodic_return={infos['episode']['r'][i]}"
+                        )
+                        writer.add_scalar(
+                            "charts/episodic_return",
+                            infos["episode"]["r"][i],
+                            global_step,
+                        )
+                        writer.add_scalar(
+                            "charts/episodic_length",
+                            infos["episode"]["l"][i],
+                            global_step,
+                        )
+            next_obs, next_done = (
+                torch.Tensor(next_obs).to(device),
+                torch.Tensor(next_done).to(device),
+            )
+
+            rewards[step] = torch.tensor(reward, device=device).view(-1)
 
             global_step += args.num_envs
             print("global_step: ", global_step)
-            if "episode" in infos:
-                print(
-                    f"global_step={global_step}, episodic_return={infos['episode']['r']}"
-                )
-                writer.add_scalar(
-                    "charts/episodic_return", infos["episode"]["r"], global_step
-                )
-                writer.add_scalar(
-                    "charts/episodic_length", infos["episode"]["l"], global_step
-                )
-
-        # Convert to processed tensors
-        processed = ProcessedRollout(
-            obs=torch.cat(rollout.obs),
-            actions=torch.cat(rollout.actions),
-            logprobs=torch.cat(rollout.logprobs),
-            rewards=torch.cat(rollout.rewards),
-            dones=torch.cat(rollout.dones),
-            values=torch.cat(rollout.values),
-        )
 
         # Calculate returns and advantages
         with torch.no_grad():
@@ -210,25 +215,29 @@ def train():
             next_value = agent.get_action(torch.Tensor(next_obs).to(device))[
                 1
             ].squeeze() * (1 - next_done)
-            advantages = torch.zeros_like(processed.rewards, device=device)
-            returns = torch.zeros_like(processed.rewards, device=device)
+            advantages = torch.zeros_like(rewards, device=device)
 
             gae = 0
-            for t in reversed(range(len(processed.rewards))):
-                mask = 1 - processed.dones[t]
-                delta = (
-                    processed.rewards[t]
-                    + args.gamma * next_value * mask
-                    - processed.values[t]
-                )
+            for t in reversed(range(args.num_steps_per_rollout)):
+                mask = 1 - dones[t]
+                delta = rewards[t] + args.gamma * next_value * mask - values[t]
                 gae = delta + args.gamma * args.gae_lambda * mask * gae
                 advantages[t] = gae
-                returns[t] = gae + processed.values[t]
-                next_value = processed.values[t]
+                next_value = values[t]
 
+            returns = advantages + values
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
+        # it's now like a flatten list to do mini batch update the network weights and biases
+        processed = ProcessedRollout(
+            obs=obs.reshape((-1,) + obs_space.shape),
+            actions=actions.reshape((-1,) + cast(tuple[int, ...], act_space.shape)),
+            logprobs=logprobs.reshape(-1),
+            advantages=advantages.reshape(-1),
+            returns=returns.reshape(-1),
+            values=values.reshape(-1),
+        )
         # Optimize policy
         for _ in range(args.epochs):
             indices = np.random.permutation(args.batch_size)
@@ -236,40 +245,40 @@ def train():
                 end = start + args.minibatch_size
                 mb_indices = indices[start:end]
 
-                obs = processed.obs[mb_indices]
-                actions = processed.actions[mb_indices]
+                p_obs = processed.obs[mb_indices]
+                p_actions = processed.actions[mb_indices]
                 old_logprobs = processed.logprobs[mb_indices]
-                advantages_mb = advantages[mb_indices]
-                returns_mb = returns[mb_indices]
+                p_advantages = processed.advantages[mb_indices]
+                p_returns = processed.returns[mb_indices]
 
-                logits, values = agent.get_action(obs)
+                logits, p_values = agent.get_action(p_obs)
                 dist = Categorical(logits=logits)
-                new_logprobs = dist.log_prob(actions)
+                new_logprobs = dist.log_prob(p_actions)
                 entropy = dist.entropy().mean()
 
                 ratio = (new_logprobs - old_logprobs).exp()
 
-                advantages_mb = (advantages_mb - advantages_mb.mean()) / (
-                    advantages_mb.std()
+                mb_advantages = (p_advantages - p_advantages.mean()) / (
+                    p_advantages.std()
                     + 1e-8  # just make sure that this is not divided by 0
                 )
 
                 # surrogate for surr
-                surr1 = ratio * advantages_mb
+                surr1 = ratio * mb_advantages
                 surr2 = (
                     torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                    * advantages_mb
+                    * mb_advantages
                 )
                 policy_loss = torch.min(surr1, surr2).mean()
                 # value_loss = 0.5 * (returns_mb - values).pow(2).mean()
-                newvalue = values.view(-1)
-                v_loss_unclipped = (newvalue - returns_mb) ** 2
-                v_clipped = returns_mb + torch.clamp(
-                    newvalue - returns_mb,
+                newvalue = p_values.view(-1)
+                v_loss_unclipped = (newvalue - p_returns) ** 2
+                v_clipped = p_returns + torch.clamp(
+                    newvalue - p_returns,
                     -args.clip_coef,
                     args.clip_coef,
                 )
-                v_loss_clipped = (v_clipped - returns_mb) ** 2
+                v_loss_clipped = (v_clipped - p_returns) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 value_loss = 0.5 * v_loss_max.mean()
 
