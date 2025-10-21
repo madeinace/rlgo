@@ -1,4 +1,4 @@
-# Reinforcement Learning demo for Cliff-Walking
+# Reinforcement Learning journals
 
 ## Run scripts
 
