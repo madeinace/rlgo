@@ -13,6 +13,8 @@ from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import RecordEpisodeStatistics
 from dataclasses import dataclass
 
+from utils.paths import RUNS_DIR
+
 
 # ----------------------
 # 1. One-Hot Wrapper
@@ -95,7 +97,9 @@ def make_env(env_id: str, is_slippery: bool) -> Callable[[], Env[np.ndarray, int
 
 
 def train(args: "Args"):
-    writer = SummaryWriter(f"runs/ppo_{args.env_id.lower()}_{int(time.time())}")
+    writer = SummaryWriter(
+        f"{RUNS_DIR}/frozenlake/ppo_scratch_{args.env_id.lower()}_{int(time.time())}"
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     random.seed(args.seed)

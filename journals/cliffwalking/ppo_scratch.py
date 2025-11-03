@@ -12,6 +12,8 @@ from torch.utils.tensorboard import SummaryWriter
 from gymnasium.wrappers import RecordEpisodeStatistics
 from dataclasses import dataclass
 
+from utils.paths import RUNS_DIR
+
 
 # ----------------------
 # 1. One-Hot Wrapper
@@ -119,7 +121,7 @@ def train():
     args.batch_size = int(args.num_envs * args.num_steps_per_rollout)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
-    writer = SummaryWriter(f"runs/ppo_cliffwalking_{int(time.time())}")
+    writer = SummaryWriter(f"{RUNS_DIR}/cliffwalking/ppo_scratch_{int(time.time())}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     random.seed(args.seed)
