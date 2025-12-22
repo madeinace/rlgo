@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "gymnasium[toy-text]>=1.1.1",
+    "gymnasium[box2d,toy-text]>=1.1.1",
     "matplotlib>=3.10.3",
     "opencv-python>=4.12.0.88",
     "swig>=4.4.0",
@@ -15,7 +15,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "box2d>=2.3.10",
     "pre-commit>=4.2.0",
     "ruff>=0.11.13",
     "standard-imghdr>=3.13.0",
